@@ -46,17 +46,31 @@ response has decayed to ~0 well before the tip) -- short-pile/floating
 """
 import os
 
-# Must be set before numpy (hence OpenBLAS) loads. Our matrices are tiny
-# (order ~n_elem*2), so threaded BLAS only adds overhead -- and on a
-# CPU-quota-limited container that sees many logical cores but gets a tiny
-# slice of them (typical of shared cloud hosting), OpenBLAS's default
-# one-thread-per-visible-core heuristic causes severe thread-contention
-# slowdowns (a linear solve that takes milliseconds locally can take
-# minutes). Pinning to 1 thread avoids that pathology entirely.
+# Belt-and-suspenders attempt via env vars -- only effective if nothing has
+# imported numpy yet (OpenBLAS reads these once, at load time). Harmless if
+# too late; the threadpoolctl call below is the reliable fix (see below).
 for _var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
     os.environ.setdefault(_var, "1")
 
 import numpy as np
+
+# The reliable fix: threadpoolctl reaches into whichever BLAS is *already*
+# loaded (OpenBLAS/MKL/etc.) and sets its thread count at runtime, so it
+# works regardless of import order -- unlike the env vars above, which only
+# help if set before numpy's first import anywhere in the process (which we
+# can't guarantee: e.g. Streamlit itself imports numpy transitively via
+# pandas/pyarrow before our app script even runs). Our matrices are tiny
+# (~n_elem*2 dimension), so threaded BLAS never helps here anyway -- and on
+# a CPU-quota-limited container that sees many logical cores but gets only
+# a sliver of actual CPU (typical of shared/free-tier cloud hosting),
+# OpenBLAS's default one-thread-per-visible-core heuristic causes severe
+# thread-contention slowdowns: a linear solve that takes milliseconds
+# locally can take minutes on such a container.
+try:
+    from threadpoolctl import threadpool_limits
+    threadpool_limits(limits=1)
+except ImportError:
+    pass
 
 
 # ----------------------------------------------------------------------
