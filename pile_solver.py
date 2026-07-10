@@ -114,9 +114,10 @@ def matlock_secant_modulus(y, pult, y50, y_floor_frac=1e-6):
     """Secant modulus for Matlock's curve, kh(y) = p(y)/y (Eq. 3). The
     curve's initial slope is infinite (p ~ y^(1/3)), so kh -> inf as
     y -> 0; |y| is floored at a small fraction of y50 to keep the first
-    Picard iteration (which starts from y = 0) finite."""
-    y_abs = max(abs(y), y_floor_frac * y50)
-    p_over_pult = min(0.5 * (y_abs / y50) ** (1.0 / 3.0), 1.0)
+    Picard iteration (which starts from y = 0) finite. Works elementwise
+    on scalars or arrays (np.maximum/np.minimum rather than max/min)."""
+    y_abs = np.maximum(np.abs(y), y_floor_frac * y50)
+    p_over_pult = np.minimum(0.5 * (y_abs / y50) ** (1.0 / 3.0), 1.0)
     return p_over_pult * pult / y_abs
 
 
@@ -155,24 +156,30 @@ def solve_pile(L, D, EI, n_elem, Vt, Mt=0.0, head_bc="free", curve="elastic",
     fixed_dofs = [1] if head_bc == "fixed" else []
     free_dofs = [i for i in range(ndof) if i not in fixed_dofs]
 
+    # Per-element DOF map and the assembly scatter-indices, built once: the
+    # mesh is uniform, so element connectivity (and hence these indices)
+    # doesn't change across Picard iterations -- only kh per element does.
+    dof_map = 2 * np.arange(n_elem)[:, None] + np.arange(4)[None, :]      # (n_elem, 4)
+    row_idx = np.repeat(dof_map[:, :, None], 4, axis=2)                   # (n_elem, 4, 4)
+    col_idx = np.repeat(dof_map[:, None, :], 4, axis=1)                  # (n_elem, 4, 4)
+    Kb = beam_bending_matrix(EI, Le)          # identical for every element
+    Wm = winkler_foundation_matrix(1.0, Le)   # Winkler matrix is linear in kh
+
     y_nodes = np.zeros(n_node)
     d = np.zeros(ndof)
     for _ in range(max_iter):
-        K = np.zeros((ndof, ndof))
-        for e in range(n_elem):
-            dofs = [2*e, 2*e+1, 2*e+2, 2*e+3]
-            if curve == "elastic":
-                kh = kh_int
+        if curve == "elastic":
+            kh_elem = np.full(n_elem, kh_int)
+        else:
+            y_avg = 0.5 * (y_nodes[:-1] + y_nodes[1:])
+            if curve == "matlock":
+                kh_elem = matlock_secant_modulus(y_avg, pult_elem, y50)
             else:
-                y_avg = 0.5 * (y_nodes[e] + y_nodes[e+1])
-                if curve == "matlock":
-                    kh = matlock_secant_modulus(y_avg, pult_elem[e], y50)
-                else:
-                    kh = secant_modulus(y_avg, kh_int, pult)
-            Ke = beam_bending_matrix(EI, Le) + winkler_foundation_matrix(kh, Le)
-            for a in range(4):
-                for b in range(4):
-                    K[dofs[a], dofs[b]] += Ke[a, b]
+                kh_elem = secant_modulus(y_avg, kh_int, pult)
+
+        Ke_all = Kb[None, :, :] + kh_elem[:, None, None] * Wm[None, :, :]   # (n_elem, 4, 4)
+        K = np.zeros((ndof, ndof))
+        np.add.at(K, (row_idx, col_idx), Ke_all)
 
         if fixed_dofs:
             K_r = K[np.ix_(free_dofs, free_dofs)]
