@@ -139,6 +139,8 @@ results = st.session_state.results
 if results is None:
     st.info("Set your parameters, then click Run analysis.")
 else:
+    st.success(f"### TIMING: FEM solve took {results['t_compute']*1000:.0f} ms "
+               f"(server-side only, excludes network/page load)")
     t_render_start = time.perf_counter()
     runs = results["runs"]
     D_r, L_r = results["D"], results["L"]
