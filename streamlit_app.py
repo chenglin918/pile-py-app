@@ -1,17 +1,18 @@
 """
 streamlit_app.py
 ------------------------------------------------------------------
-Interactive web app for laterally loaded pile / p-y analysis, teaching
-material from the EGBC "Numerical Modeling of Soil-Structure
-Interaction" short course. Backed entirely by pile_solver.py -- a
-standalone 1D FEM solver implementing the hyperbolic and Matlock
-(1970) p-y curves, with free/fixed-head boundary conditions and
-Matlock's p_ult varying properly with depth.
+Browser version of the laterally loaded pile / p-y app. Same inputs,
+same outputs, same pile_solver.py backend as pile_py_app.ipynb (the
+Jupyter/ipywidgets version) -- pick whichever front end suits how
+you're working; both stay in sync because they share one solver
+module and one results-export format.
 
-Run locally with:
+Run with:
     streamlit run streamlit_app.py
 ------------------------------------------------------------------
 """
+import time
+
 import numpy as np
 import matplotlib.pyplot as plt
 import streamlit as st
@@ -22,9 +23,10 @@ st.set_page_config(page_title="Laterally Loaded Pile -- p-y Analysis", layout="w
 
 st.title("Laterally Loaded Pile — Interactive *p–y* Analysis")
 st.markdown(
-    "Set pile parameters, a soil / *p–y* curve (hyperbolic or Matlock 1970 soft "
-    "clay), and a head boundary condition, then click **Run analysis** for response "
-    "profiles and design curves."
+    "Browser version of the companion app to *EGBC Course Notes — Numerical Modeling "
+    "of SSI* (Modules 1–3). Backed by the same `pile_solver.py` used by "
+    "`pile_py_app.ipynb` — both apps share one FEM implementation, extended with a "
+    "fixed-rotation head option and Matlock's $p_{ult}$ varying properly with depth."
 )
 
 col_pile, col_soil, col_bc = st.columns(3)
@@ -105,6 +107,7 @@ if "results" not in st.session_state:
     st.session_state.results = None
 
 if run_clicked:
+    t_start = time.perf_counter()
     n_elem = 100
     curve_names = [curve]
     kwargs_map = {curve: primary_kwargs}
@@ -126,15 +129,17 @@ if run_clicked:
         loads_arr, y_arr, M_arr = sweep_head_load(L, D, EI, n_elem, loads,
                                                     head_bc=head_bc, **r["kwargs"])
         r["sweep_loads"], r["sweep_y"], r["sweep_M"] = loads_arr, y_arr, M_arr
+    t_compute = time.perf_counter() - t_start
 
     st.session_state.results = {"L": L, "D": D, "EI": EI, "head_bc": head_bc,
-                                 "Vt": Vt, "Mt": Mt, "runs": runs}
+                                 "Vt": Vt, "Mt": Mt, "runs": runs, "t_compute": t_compute}
 
 results = st.session_state.results
 
 if results is None:
     st.info("Set your parameters, then click Run analysis.")
 else:
+    t_render_start = time.perf_counter()
     runs = results["runs"]
     D_r, L_r = results["D"], results["L"]
     head_label = "fixed head" if results["head_bc"] == "fixed" else "free head"
@@ -175,6 +180,11 @@ else:
     axes2[1].legend()
     fig2.tight_layout()
     st.pyplot(fig2)
+
+    t_render = time.perf_counter() - t_render_start
+    st.caption(f"⏱️ FEM solve: {results['t_compute']*1000:.0f} ms  |  "
+               f"Plot render: {t_render*1000:.0f} ms  "
+               f"(timings are for the server-side work only, not network/page load)")
 
     # ---- summary ----
     for r in runs:
