@@ -44,6 +44,18 @@ response has decayed to ~0 well before the tip) -- short-pile/floating
 -tip conditions are out of scope for this solver.
 ------------------------------------------------------------------
 """
+import os
+
+# Must be set before numpy (hence OpenBLAS) loads. Our matrices are tiny
+# (order ~n_elem*2), so threaded BLAS only adds overhead -- and on a
+# CPU-quota-limited container that sees many logical cores but gets a tiny
+# slice of them (typical of shared cloud hosting), OpenBLAS's default
+# one-thread-per-visible-core heuristic causes severe thread-contention
+# slowdowns (a linear solve that takes milliseconds locally can take
+# minutes). Pinning to 1 thread avoids that pathology entirely.
+for _var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    os.environ.setdefault(_var, "1")
+
 import numpy as np
 
 
